@@ -4,26 +4,30 @@ A web-based fractal explorer ported from a Java desktop application (2002).
 Renders escape-time fractals in the browser using a Web Worker, with a small
 Python/Flask backend for saving and loading configurations.
 
+![Preview](preview.png)
+
 ---
 
 ## Features
 
 ### Fractal formulas
-| Name | Description |
-|------|-------------|
-| Mandelbrot | Classic z² + c |
-| Mandelbrot 2–4 | Higher-degree variants (z³, z⁴, z⁵) |
-| Barnsley 1–3 | IFS-based fractals with conditional transforms |
-| Triangle | Real/imaginary axis-swapped Mandelbrot variant |
-| Spider | Self-modifying seed: c → c/2 + z each iteration |
-| Phoenix | Uses previous orbit value as additional term |
-| Magnet | Complex division formula with two attractors |
-| Newton | Newton's method root-finding on z³ − 1 |
+
+| Name            | Description                                      |
+| --------------- | ------------------------------------------------ |
+| Mandelbrot      | Classic z² + c                                  |
+| Mandelbrot 2–4 | Higher-degree variants (z³, z⁴, z⁵)           |
+| Barnsley 1–3   | IFS-based fractals with conditional transforms   |
+| Triangle        | Real/imaginary axis-swapped Mandelbrot variant   |
+| Spider          | Self-modifying seed: c → c/2 + z each iteration |
+| Phoenix         | Uses previous orbit value as additional term     |
+| Magnet          | Complex division formula with two attractors     |
+| Newton          | Newton's method root-finding on z³ − 1         |
 
 Each formula works in both **Mandelbrot** mode (c = pixel) and **Julia** mode
 (c = fixed seed, z₀ = pixel).
 
 ### Coloring
+
 **Interior** (points that never escape):
 `none` · `zmag` · `real/imag` · `color decomp.` · `squares`
 
@@ -31,20 +35,23 @@ Each formula works in both **Mandelbrot** mode (c = pixel) and **Julia** mode
 `iter` · `iter+real` · `iter+imag` · `iter+real/imag` · `binary decomp.` · `color decomp.` · `potential`
 
 ### Palettes
+
 Seven built-in presets (Greyscale, Red, Fire, Blue, Green, Sunset, Ocean), a
 random generator, and save/load of custom palettes via the backend.
 
 ### Navigation
-| Mode | How to activate | Action |
-|------|-----------------|--------|
-| Zoom | `Z` or toolbar | Drag a rectangle → click inside to zoom in, outside to zoom out |
-| Center | `C` or toolbar | Click any point to re-center there |
+
+| Mode          | How to activate  | Action                                                             |
+| ------------- | ---------------- | ------------------------------------------------------------------ |
+| Zoom          | `Z` or toolbar | Drag a rectangle → click inside to zoom in, outside to zoom out   |
+| Center        | `C` or toolbar | Click any point to re-center there                                 |
 | Julia preview | `J` or toolbar | Hover over Mandelbrot view to see the corresponding Julia set live |
 
 Additional controls: `+` / `-` zoom, arrow keys to pan, rotation and zoom
 fields in the parameter panel.
 
 ### Rendering modes
+
 - **Progressive** (default) — renders 16×16 blocks first, then refines to pixel level
 - **Linear** — scans row by row, streaming updates to the canvas
 
@@ -92,21 +99,21 @@ All data is stored as plain JSON files in `fractals/` and `palettes/`.
 
 ### Fractals
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/fractals` | List saved fractal names |
-| `GET` | `/api/fractals/<name>` | Load a fractal config |
-| `POST` | `/api/fractals/<name>` | Save a fractal config (JSON body) |
-| `DELETE` | `/api/fractals/<name>` | Delete a saved config |
+| Method     | Endpoint                 | Description                       |
+| ---------- | ------------------------ | --------------------------------- |
+| `GET`    | `/api/fractals`        | List saved fractal names          |
+| `GET`    | `/api/fractals/<name>` | Load a fractal config             |
+| `POST`   | `/api/fractals/<name>` | Save a fractal config (JSON body) |
+| `DELETE` | `/api/fractals/<name>` | Delete a saved config             |
 
 ### Palettes
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/palettes` | List saved palette names |
-| `GET` | `/api/palettes/<name>` | Load a palette |
-| `POST` | `/api/palettes/<name>` | Save a palette (JSON body) |
-| `DELETE` | `/api/palettes/<name>` | Delete a palette |
+| Method     | Endpoint                 | Description                |
+| ---------- | ------------------------ | -------------------------- |
+| `GET`    | `/api/palettes`        | List saved palette names   |
+| `GET`    | `/api/palettes/<name>` | Load a palette             |
+| `POST`   | `/api/palettes/<name>` | Save a palette (JSON body) |
+| `DELETE` | `/api/palettes/<name>` | Delete a palette           |
 
 ### Config format
 
@@ -138,14 +145,14 @@ Palette files contain just `{ "palette": [[r,g,b], ...] }`.
 
 ## Keyboard shortcuts
 
-| Key | Action |
-|-----|--------|
-| `Z` | Switch to zoom mode |
-| `C` | Switch to center mode |
-| `J` | Switch to Julia preview mode |
-| `+` / `=` | Zoom in |
-| `-` | Zoom out |
-| `←` `→` `↑` `↓` | Pan |
+| Key                         | Action                       |
+| --------------------------- | ---------------------------- |
+| `Z`                       | Switch to zoom mode          |
+| `C`                       | Switch to center mode        |
+| `J`                       | Switch to Julia preview mode |
+| `+` / `=`               | Zoom in                      |
+| `-`                       | Zoom out                     |
+| `←` `→` `↑` `↓` | Pan                          |
 
 ---
 
