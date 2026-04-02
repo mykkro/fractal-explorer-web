@@ -1,0 +1,329 @@
+/* ============================================================
+   Fractal Explorer – Dark-themed stylesheet
+   ============================================================ */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:         #1a1a1e;
+  --bg2:        #222228;
+  --bg3:        #2a2a32;
+  --border:     #3a3a4a;
+  --text:       #d0d0e0;
+  --text-dim:   #707088;
+  --accent:     #5588ff;
+  --accent-dim: #334488;
+  --danger:     #cc4444;
+  --active-bg:  #2a3860;
+  --active-fg:  #88aaff;
+  --input-bg:   #18181e;
+  --font:       "Segoe UI", system-ui, sans-serif;
+  --font-mono:  "Cascadia Code", "Consolas", monospace;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ============================================================
+   TOP BAR
+   ============================================================ */
+
+.top-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  height: auto;
+  min-height: 40px;
+}
+
+.app-title {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--active-fg);
+  margin-right: 6px;
+  white-space: nowrap;
+}
+
+.formula-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.formula-btn {
+  padding: 3px 7px;
+  font-size: 11px;
+  background: var(--bg3);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.formula-btn:hover   { background: var(--accent-dim); color: var(--text); }
+.formula-btn.active  { background: var(--active-bg);  color: var(--active-fg); border-color: var(--accent); }
+
+.btn-group {
+  display: flex;
+  gap: 2px;
+}
+
+button {
+  padding: 4px 9px;
+  background: var(--bg3);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--font);
+  transition: background 0.12s;
+  white-space: nowrap;
+}
+button:hover  { background: var(--accent-dim); }
+button.active { background: var(--active-bg); color: var(--active-fg); border-color: var(--accent); }
+button.danger { color: var(--danger); border-color: var(--danger); }
+button.danger:hover { background: #3a1010; }
+
+.toggle-btn { padding: 4px 10px; }
+
+.ctrl-btn { padding: 4px 9px; }
+
+/* ============================================================
+   MAIN LAYOUT
+   ============================================================ */
+
+.main-layout {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Canvas wrapper */
+.canvas-wrapper {
+  flex: 1;
+  overflow: auto;
+  background: #111114;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  position: relative;
+  padding: 8px;
+}
+
+.canvas-stack {
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+#fractal-canvas {
+  display: block;
+}
+
+#overlay-canvas {
+  position: absolute;
+  top: 0; left: 0;
+  pointer-events: none;
+}
+
+/* Julia preview overlay */
+.julia-overlay {
+  position: absolute;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.julia-overlay-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-bottom: 2px;
+  text-align: center;
+}
+
+#julia-preview-canvas {
+  display: block;
+}
+
+/* ============================================================
+   RIGHT PANEL
+   ============================================================ */
+
+.panel {
+  width: 230px;
+  min-width: 230px;
+  background: var(--bg2);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  flex-shrink: 0;
+  padding-bottom: 12px;
+}
+
+.panel-section {
+  padding: 8px 10px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.section-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+/* Info grid (key: value pairs) */
+.info-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  font-size: 11px;
+}
+.info-key { color: var(--text-dim); }
+.info-val {
+  color: var(--active-fg);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Parameter grid (label + input) */
+.param-grid {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 4px 6px;
+  align-items: center;
+}
+
+.param-grid label {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: right;
+}
+
+input[type="number"],
+input[type="text"],
+select {
+  background: var(--input-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 5px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  width: 100%;
+  outline: none;
+  transition: border-color 0.12s;
+}
+input[type="number"]:focus,
+input[type="text"]:focus,
+select:focus { border-color: var(--accent); }
+
+input[type="checkbox"] {
+  width: auto;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+select option { background: var(--bg2); }
+
+/* Palette bar */
+.palette-bar {
+  display: block;
+  width: 100%;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  margin-bottom: 6px;
+  image-rendering: pixelated;
+}
+
+/* Palette preset buttons */
+.palette-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-bottom: 4px;
+}
+.palette-preset {
+  padding: 2px 7px;
+  font-size: 11px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+}
+.palette-preset:hover { background: var(--accent-dim); }
+
+/* Button row (inline group) */
+.btn-row {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+.small-btn  { padding: 3px 7px; font-size: 11px; flex-shrink: 0; }
+.action-btn { width: 100%; padding: 5px; font-size: 12px; }
+
+/* Help section */
+.help-section { }
+.key-help {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.7;
+}
+kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+/* ============================================================
+   STATUS BAR
+   ============================================================ */
+
+.status-bar {
+  height: 22px;
+  line-height: 22px;
+  padding: 0 10px;
+  background: var(--bg2);
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ============================================================
+   SCROLLBARS (Webkit)
+   ============================================================ */
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
