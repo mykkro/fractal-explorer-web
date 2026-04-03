@@ -161,3 +161,9 @@ Palette files contain just `{ "palette": [[r,g,b], ...] }`.
 Originally written in Java (AWT) in 2002 by Miroslav Uller and Ondrej Kotik,
 version 1.4. Rewritten as a browser app in 2026 — all fractal mathematics and
 coloring algorithms are faithful ports of the original Java code.
+
+---
+
+## License
+
+[MIT](LICENSE) © 2026
