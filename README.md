@@ -1,8 +1,9 @@
 # Fractal Explorer
 
 A web-based fractal explorer ported from a Java desktop application (2002).
-Renders escape-time fractals in the browser using a Web Worker, with a small
-Python/Flask backend for saving and loading configurations.
+Renders escape-time fractals in the browser using a Web Worker. It runs either
+as a purely static site (e.g. GitHub Pages) or with a small optional
+Python/Flask backend for saving and loading configurations on the server.
 
 ![Preview](preview.png)
 
@@ -21,10 +22,11 @@ Python/Flask backend for saving and loading configurations.
 | Spider          | Self-modifying seed: c → c/2 + z each iteration |
 | Phoenix         | Uses previous orbit value as additional term     |
 | Magnet          | Complex division formula with two attractors     |
-| Newton          | Newton's method root-finding on z³ − 1         |
+| Newton          | Newton's method root-finding on z³ − a         |
 
 Each formula works in both **Mandelbrot** mode (c = pixel) and **Julia** mode
-(c = fixed seed, z₀ = pixel).
+(c = fixed seed, z₀ = pixel). Newton always iterates from z₀ = pixel; in
+Mandelbrot mode a = 1 + perturbation (classic z³ − 1), in Julia mode a = seed.
 
 ### Coloring
 
@@ -43,12 +45,25 @@ random generator, and save/load of custom palettes via the backend.
 
 | Mode          | How to activate  | Action                                                             |
 | ------------- | ---------------- | ------------------------------------------------------------------ |
+| Pan (default) | `P` or toolbar | Drag to move the view; pinch to zoom on touch screens             |
 | Zoom          | `Z` or toolbar | Drag a rectangle → click inside to zoom in, outside to zoom out   |
 | Center        | `C` or toolbar | Click any point to re-center there                                 |
-| Julia preview | `J` or toolbar | Hover over Mandelbrot view to see the corresponding Julia set live |
+| Julia preview | `J` or toolbar | Hover over Mandelbrot view to see the corresponding Julia set live; click to open it |
 
-Additional controls: `+` / `-` zoom, arrow keys to pan, rotation and zoom
-fields in the parameter panel.
+In every mode the mouse wheel zooms around the cursor and right/middle-drag
+pans. Additional controls: `+` / `-` zoom, arrow keys to pan, rotation and
+zoom fields in the parameter panel.
+
+### Display
+
+The **Display** option (Rendering section) controls how the image fills the
+canvas area: `1:1 pixels`, `Contain`, `Cover` (default), `Stretch`, or `Fill window`,
+which renders at the area's own resolution (sharp, re-renders on resize).
+`F` or the toolbar button toggles full screen. The choice is remembered in the
+browser.
+
+**Image size** offers presets from 200×200 up to 3840×2160 (square, 4:3 and
+16:9), plus **Custom…** for any size up to 8192×8192.
 
 ### Rendering modes
 
@@ -62,23 +77,50 @@ request automatically cancels the previous one.
 
 ## Getting started
 
+### Static (no backend)
+
+Serve the `static/` folder with any web server, e.g.
+
+```bash
+cd static
+python -m http.server 8000
+```
+
+and open [http://localhost:8000](http://localhost:8000). Saved fractals and
+palettes are kept in the browser's `localStorage`; use **Export JSON** /
+**Import JSON** to move configs between browsers or machines. (Opening
+`index.html` directly via `file://` does not work – browsers block Web
+Workers there.)
+
+### GitHub Pages
+
+The workflow in `.github/workflows/pages.yml` publishes `static/` on every
+push to `main`. Enable it once in the repository's
+**Settings → Pages → Source: GitHub Actions**.
+
+### With the Flask backend
+
 **Requirements:** Python 3.9+
 
 ```bash
-cd web
 pip install -r requirements.txt
 python app.py
 ```
 
-Open [http://localhost:5000](http://localhost:5000) in your browser.
+Open [http://localhost:5000](http://localhost:5000) in your browser. Saved
+configs are then stored as JSON files in `fractals/` and `palettes/`.
+
+The app picks the storage automatically at startup: if `api/fractals` answers
+with JSON it uses the server, otherwise the browser. The current choice is
+shown as **Storage** in the side panel.
 
 ---
 
 ## Project layout
 
 ```
-web/
-├── app.py              Flask REST backend
+.
+├── app.py              Flask REST backend (optional)
 ├── requirements.txt
 ├── fractals/           Saved fractal configs (created automatically)
 ├── palettes/           Saved custom palettes (created automatically)
@@ -88,14 +130,14 @@ web/
     │   └── style.css
     └── js/
         ├── worker.js   Fractal math – formulas, coloring, renderer
-        └── app.js      UI state, canvas interaction, API calls
+        └── app.js      UI state, canvas interaction, storage (server / localStorage)
 ```
 
 ---
 
 ## REST API
 
-All data is stored as plain JSON files in `fractals/` and `palettes/`.
+Only used when running with the Flask backend. All data is stored as plain JSON files in `fractals/` and `palettes/`.
 
 ### Fractals
 
@@ -147,12 +189,14 @@ Palette files contain just `{ "palette": [[r,g,b], ...] }`.
 
 | Key                         | Action                       |
 | --------------------------- | ---------------------------- |
+| `P`                       | Switch to pan mode           |
 | `Z`                       | Switch to zoom mode          |
 | `C`                       | Switch to center mode        |
 | `J`                       | Switch to Julia preview mode |
 | `+` / `=`               | Zoom in                      |
 | `-`                       | Zoom out                     |
 | `←` `→` `↑` `↓` | Pan                          |
+| `F`                       | Toggle full screen           |
 
 ---
 

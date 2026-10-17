@@ -38,9 +38,10 @@
 
   <!-- Control mode -->
   <div class="btn-group">
+    <button class="ctrl-btn" data-ctrl="pan"    title="Pan (P): drag to move, wheel or pinch to zoom">✋ Pan</button>
     <button class="ctrl-btn" data-ctrl="zoom"   title="Zoom mode (Z)">⬚ Zoom</button>
     <button class="ctrl-btn" data-ctrl="center" title="Center mode (C)">✛ Center</button>
-    <button class="ctrl-btn" data-ctrl="julia"  title="Julia preview (J)">◎ Preview</button>
+    <button class="ctrl-btn" data-ctrl="julia"  title="Julia preview (J): hover to preview, click to open that Julia set">◎ Preview</button>
   </div>
 
   <!-- Zoom controls -->
@@ -52,6 +53,7 @@
 
   <button id="btn-rerender" title="Re-render">↺ Render</button>
   <button id="btn-export-png" title="Export PNG">⬇ PNG</button>
+  <button id="btn-fullscreen" title="Full screen (F)">⛶ Full screen</button>
 </header>
 
 <!-- =========================================================
@@ -85,6 +87,8 @@
         <span class="info-key">Size</span>       <span id="lbl-size"     class="info-val">512×512</span>
         <span class="info-key">Control</span>   <span id="lbl-control"  class="info-val">zoom</span>
         <span class="info-key">Renderer</span>  <span id="lbl-render"   class="info-val">squared</span>
+        <span class="info-key" title="Where saved fractals and palettes are kept">Storage</span>
+        <span id="lbl-storage" class="info-val">…</span>
       </div>
     </section>
 
@@ -178,8 +182,24 @@
           <option value="linear">Linear</option>
         </select>
 
+        <label>Display</label>
+        <select id="sel-display" title="How the image fits the canvas area">
+          <option value="actual">1:1 pixels</option>
+          <option value="contain">Contain</option>
+          <option value="cover">Cover</option>
+          <option value="stretch">Stretch</option>
+          <option value="window">Fill window</option>
+        </select>
+
         <label>Image size</label>
-        <select id="sel-size"></select>
+        <select id="sel-size" title="Render resolution (set automatically in Fill window)"></select>
+
+        <div id="custom-size-row" class="btn-row" style="grid-column: 2" hidden>
+          <input id="inp-size-w" type="number" min="16" max="8192" step="1" title="Width (px)" />
+          <span class="size-x">×</span>
+          <input id="inp-size-h" type="number" min="16" max="8192" step="1" title="Height (px)" />
+          <button id="btn-size-apply" class="small-btn">Apply</button>
+        </div>
 
         <label>Lock ratio</label>
         <input id="chk-lockratio" type="checkbox" checked />
@@ -227,6 +247,13 @@
           <button id="btn-load-fractal" class="small-btn">Load</button>
           <button id="btn-delete-fractal" class="small-btn danger">✕</button>
         </div>
+
+        <label>File</label>
+        <div class="btn-row">
+          <button id="btn-export-json" class="small-btn" title="Download current config as .json">Export JSON</button>
+          <button id="btn-import-json" class="small-btn" title="Load a config from a .json file">Import JSON</button>
+          <input id="inp-import-json" type="file" accept=".json,application/json" hidden />
+        </div>
       </div>
     </section>
 
@@ -234,8 +261,9 @@
     <section class="panel-section help-section">
       <h3 class="section-title">Keys</h3>
       <div class="key-help">
-        <kbd>Z</kbd> zoom &nbsp; <kbd>C</kbd> center &nbsp; <kbd>J</kbd> julia<br/>
-        <kbd>+</kbd><kbd>-</kbd> zoom &nbsp; <kbd>←→↑↓</kbd> pan
+        <kbd>P</kbd> pan &nbsp; <kbd>Z</kbd> zoom &nbsp; <kbd>C</kbd> center &nbsp; <kbd>J</kbd> julia<br/>
+        <kbd>+</kbd><kbd>-</kbd> zoom &nbsp; <kbd>←→↑↓</kbd> pan &nbsp; <kbd>F</kbd> full screen<br/>
+        wheel: zoom at cursor · right-drag: pan
       </div>
     </section>
 

@@ -68,17 +68,33 @@ function setDisplayZoom(dx, dy) {
   state.zoomY = 4.0 / (state.height * dy);
 }
 
-// Set complex center coordinate, updating pixel anchor
-function setOriginXY(cx, cy) {
+// Complex coordinate of canvas pixel (px, py)
+function pixelToComplex(px, py) {
+  const dx = getDx(), dy = getDy();
+  return [
+    (px - state.origX) * dx + (py - state.origY) * dy,
+    (px - state.origX) * dy - (py - state.origY) * dx,
+  ];
+}
+
+// Move the pixel anchor so that canvas pixel (px, py) maps to (cr, ci).
+// The anchor is kept fractional so repeated zooming around a point
+// (mouse wheel, pinch) does not drift.
+function anchorComplexAt(px, py, cr, ci) {
   const dx = getDx(), dy = getDy();
   const denom = dx * dx + dy * dy;
   if (denom === 0) return;
-  state.origX = Math.round(state.width  / 2 - (cx * dx + cy * dy) / denom);
-  state.origY = Math.round(state.height / 2 - (cx * dy - cy * dx) / denom);
+  state.origX = px - (cr * dx + ci * dy) / denom;
+  state.origY = py - (cr * dy - ci * dx) / denom;
 }
 
-// Default view for current size
-function resetView(resetColors) {
+// Set complex center coordinate, updating pixel anchor
+function setOriginXY(cx, cy) {
+  anchorComplexAt(state.width / 2, state.height / 2, cx, cy);
+}
+
+// Default geometry (center 0, span ±2, no rotation) for current size
+function setDefaultGeometry() {
   state.rotation = 0;
   const z = state.lockRatio
     ? 4.0 / Math.min(state.width, state.height)
@@ -87,8 +103,14 @@ function resetView(resetColors) {
   state.zoomY = z !== null ? z : 4.0 / state.height;
   state.origX = Math.round(state.width  / 2);
   state.origY = Math.round(state.height / 2);
+}
+
+// Default view for current size
+function resetView(resetColors) {
+  setDefaultGeometry();
   state.pertX = 0; state.pertY = 0;
-  state.juliaX = 0; state.juliaY = 0;
+  // Julia seed is deliberately kept: resetting it to 0 turns most Julia
+  // sets into a plain disk (z² + 0), and the seed is usually picked by hand.
   state.iterations = 120;
   state.bailout = 4.0;
   if (resetColors) {
@@ -220,11 +242,84 @@ const juliaCtx    = juliaCanvas.getContext("2d");
 function applyCanvasSize() {
   canvas.width  = state.width;
   canvas.height = state.height;
+  updateCanvasLayout();
+  syncSizeSelect();
+}
+
+// ---------------------------------------------------------------------------
+// DISPLAY MODES
+// How the rendered image is shown inside the canvas area:
+//   actual   1:1 pixels, scrollbars if larger than the area
+//   contain  scaled to fit, keeps aspect ratio
+//   cover    scaled to fill, keeps aspect ratio, edges cropped
+//   stretch  scaled to fill exactly, aspect ratio not kept
+//   window   render resolution follows the area size (sharp, full detail)
+// ---------------------------------------------------------------------------
+
+const wrapperEl = document.getElementById("canvas-wrapper");
+const stackEl   = document.querySelector(".canvas-stack");
+const DISPLAY_KEY = "fractal-explorer:display";
+let displayMode = "cover";
+try { displayMode = localStorage.getItem(DISPLAY_KEY) || "cover"; } catch (_) {}
+let fixedSize = null;   // last preset size, restored when leaving "window"
+
+function updateCanvasLayout() {
+  wrapperEl.classList.toggle("scaled", displayMode !== "actual");
+  if (displayMode === "actual") {
+    stackEl.style.width = stackEl.style.height = "";
+    return;
+  }
+  const aw = wrapperEl.clientWidth, ah = wrapperEl.clientHeight;
+  let sx = aw / state.width, sy = ah / state.height;
+  if (displayMode === "contain") sx = sy = Math.min(sx, sy);
+  if (displayMode === "cover")   sx = sy = Math.max(sx, sy);
+  stackEl.style.width  = state.width  * sx + "px";
+  stackEl.style.height = state.height * sy + "px";
+}
+
+// In "window" mode keep the render resolution equal to the area size
+// (in device pixels, capped at 2× to keep render times sane)
+function syncWindowResolution() {
+  if (displayMode !== "window") return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.max(16, Math.round(wrapperEl.clientWidth  * dpr));
+  const h = Math.max(16, Math.round(wrapperEl.clientHeight * dpr));
+  if (w === state.width && h === state.height) return;
+  changeResolution(w, h);
+  scheduleRender(150);
+}
+
+function setDisplayMode(mode) {
+  if (mode === displayMode) return;
+  if (mode === "window") {
+    fixedSize = [state.width, state.height];
+  } else if (displayMode === "window") {
+    const [w, h] = fixedSize || [512, 512];
+    changeResolution(w, h);
+    scheduleRender();
+  }
+  displayMode = mode;
+  try { localStorage.setItem(DISPLAY_KEY, mode); } catch (_) {}
+  document.getElementById("sel-size").disabled = mode === "window";
+  updateCanvasLayout();
+  syncWindowResolution();
+}
+
+new ResizeObserver(() => {
+  updateCanvasLayout();
+  syncWindowResolution();
+}).observe(wrapperEl);
+
+function toggleFullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else wrapperEl.requestFullscreen?.();
 }
 
 worker.onmessage = function (e) {
   const msg = e.data;
   if (msg.id !== renderId) return;
+  // Resolution changed since this render started (e.g. window resize)
+  if (msg.buffer.length !== state.width * state.height * 4) return;
   if (msg.type === "progress" || msg.type === "done") {
     const imgData = new ImageData(msg.buffer, state.width, state.height);
     ctx.putImageData(imgData, 0, 0);
@@ -247,58 +342,73 @@ juliaWorker.onmessage = function (e) {
 
 // ---------------------------------------------------------------------------
 // MOUSE INTERACTION
+// The canvas may be displayed scaled (see DISPLAY MODES), so all pointer
+// positions go through canvasPoint() to get canvas-pixel coordinates.
 // ---------------------------------------------------------------------------
 
-let controlMode = "zoom"; // "zoom" | "center" | "julia"
+let controlMode = "pan"; // "pan" | "zoom" | "center" | "julia"
 let dragStart   = null;
 let dragCurrent = null;
-let selRect     = null;   // { x,y,w,h } in canvas px
+let selRect     = null;   // { x1,y1,x2,y2 } in canvas px
+
+function canvasPoint(e) {
+  const r = canvas.getBoundingClientRect();
+  return {
+    x: (e.clientX - r.left) * canvas.width  / r.width,
+    y: (e.clientY - r.top)  * canvas.height / r.height,
+  };
+}
 
 canvas.addEventListener("mousedown", (e) => {
-  if (controlMode !== "zoom") return;
-  dragStart = { x: e.offsetX, y: e.offsetY };
+  if (e.button === 1) e.preventDefault();   // no auto-scroll on middle-drag
+  if (controlMode !== "zoom" || e.button !== 0) return;
+  dragStart = canvasPoint(e);
   dragCurrent = { ...dragStart };
   selRect = null;
 });
 
 canvas.addEventListener("mousemove", (e) => {
+  const p = canvasPoint(e);
   if (controlMode === "zoom" && dragStart) {
-    dragCurrent = { x: e.offsetX, y: e.offsetY };
+    dragCurrent = p;
     drawSelection();
   }
-  if (controlMode === "julia") {
-    const px = e.offsetX, py = e.offsetY;
-    const dx = getDx(), dy = getDy();
-    const jre = (px - state.origX) * dx + (py - state.origY) * dy;
-    const jim = (px - state.origX) * dy - (py - state.origY) * dx;
-    updateJuliaPreviewPosition(e.offsetX, e.offsetY);
+  // The preview only makes sense over the parameter (Mandelbrot) plane:
+  // in Julia mode the pixel coordinates are z-values, not seeds.
+  if (controlMode === "julia" && !state.isJulia && !gesture) {
+    const [jre, jim] = pixelToComplex(p.x, p.y);
+    updateJuliaPreviewPosition(e);
     startJuliaPreview(jre, jim);
   }
 });
 
 canvas.addEventListener("mouseup", (e) => {
-  if (controlMode !== "zoom" || !dragStart) return;
-  const x1 = Math.min(dragStart.x, e.offsetX);
-  const y1 = Math.min(dragStart.y, e.offsetY);
-  const x2 = Math.max(dragStart.x, e.offsetX);
-  const y2 = Math.max(dragStart.y, e.offsetY);
+  if (controlMode !== "zoom" || !dragStart || e.button !== 0) return;
+  const p = canvasPoint(e);
+  const x1 = Math.min(dragStart.x, p.x);
+  const y1 = Math.min(dragStart.y, p.y);
+  const x2 = Math.max(dragStart.x, p.x);
+  const y2 = Math.max(dragStart.y, p.y);
   selRect = { x1, y1, x2, y2 };
   dragStart = null;
   drawSelection();
 });
 
 canvas.addEventListener("click", (e) => {
+  const p = canvasPoint(e);
   if (controlMode === "center") {
-    centerAt(e.offsetX, e.offsetY);
+    centerAt(p.x, p.y);
     clearSelection();
     scheduleRender();
     return;
   }
   if (controlMode === "julia") {
-    const dx = getDx(), dy = getDy();
-    state.juliaX = (e.offsetX - state.origX) * dx + (e.offsetY - state.origY) * dy;
-    state.juliaY = (e.offsetX - state.origX) * dy - (e.offsetY - state.origY) * dx;
-    updateParamDisplay();
+    if (state.isJulia) return;
+    // Pick the seed under the cursor and open its Julia set
+    [state.juliaX, state.juliaY] = pixelToComplex(p.x, p.y);
+    hideJuliaOverlay();
+    enterJuliaMode();
+    scheduleRender();
     return;
   }
   if (controlMode === "zoom" && selRect) {
@@ -308,7 +418,7 @@ canvas.addEventListener("click", (e) => {
     const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
     const xx = rw / state.width;
     const yy = rh / state.height;
-    const inside = e.offsetX >= x1 && e.offsetX <= x2 && e.offsetY >= y1 && e.offsetY <= y2;
+    const inside = p.x >= x1 && p.x <= x2 && p.y >= y1 && p.y <= y2;
     if (inside) {
       centerAt(mx, my);
       applyZoom(xx, yy);
@@ -324,7 +434,135 @@ canvas.addEventListener("click", (e) => {
 canvas.addEventListener("mouseleave", () => {
   dragStart = null;
   clearSelection();
+  hideJuliaOverlay();
 });
+
+// ---------------------------------------------------------------------------
+// DIRECT PAN & ZOOM
+//   wheel                        zoom around the cursor (any tool)
+//   drag with the Pan tool       pan (mouse, pen or one finger)
+//   right/middle drag            pan (any tool)
+//   two-finger pinch (Pan tool)  zoom + pan
+// While a gesture runs, the last rendered image is moved/scaled on the
+// canvas as a cheap preview; the real render starts when the gesture settles.
+// ---------------------------------------------------------------------------
+
+let gesture = null;   // { snap, origX, origY, zoomX, zoomY } at gesture start
+let gestureRenderTimer = null;
+
+function beginGesture() {
+  clearTimeout(gestureRenderTimer);
+  if (gesture) return;
+  const snap = document.createElement("canvas");
+  snap.width = canvas.width; snap.height = canvas.height;
+  snap.getContext("2d").drawImage(canvas, 0, 0);
+  gesture = {
+    snap,
+    origX: state.origX, origY: state.origY,
+    zoomX: state.zoomX, zoomY: state.zoomY,
+  };
+  renderId++;   // ignore progress from a render still in flight
+  clearSelection();
+  hideJuliaOverlay();
+}
+
+// Redraw the snapshot transformed to match the current view
+function drawGesturePreview() {
+  if (!gesture) return;
+  const kx = gesture.zoomX / state.zoomX;
+  const ky = gesture.zoomY / state.zoomY;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = "#111114";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.setTransform(kx, 0, 0, ky, state.origX - kx * gesture.origX, state.origY - ky * gesture.origY);
+  ctx.drawImage(gesture.snap, 0, 0);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  updateParamDisplay();
+}
+
+// Render once the gesture has been quiet for `delay` ms
+function endGesture(delay = 0) {
+  clearTimeout(gestureRenderTimer);
+  gestureRenderTimer = setTimeout(() => {
+    gesture = null;
+    scheduleRender();
+  }, delay);
+}
+
+// Zoom by factor f (>1 = zoom out) keeping canvas pixel (px, py) fixed
+function zoomAt(px, py, f) {
+  const MIN = 1e-15;
+  if (state.zoomX * f < MIN || state.zoomY * f < MIN) return;
+  const [cr, ci] = pixelToComplex(px, py);
+  state.zoomX *= f;
+  state.zoomY *= f;
+  anchorComplexAt(px, py, cr, ci);
+}
+
+canvas.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const p = canvasPoint(e);
+  // Normalise line/page deltas to pixels; ~10% per mouse-wheel notch
+  const delta = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);
+  beginGesture();
+  zoomAt(p.x, p.y, Math.exp(delta * 0.001));
+  drawGesturePreview();
+  endGesture(250);
+}, { passive: false });
+
+const pointers = new Map();   // pointerId -> last canvas point
+let pinchDist = 0;
+
+function pinchInfo() {
+  const [a, b] = [...pointers.values()];
+  return { mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2, dist: Math.hypot(a.x - b.x, a.y - b.y) };
+}
+
+canvas.addEventListener("pointerdown", (e) => {
+  const panButton = e.button === 1 || e.button === 2 ||
+                    (e.button === 0 && controlMode === "pan");
+  if (!panButton) return;
+  e.preventDefault();
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, canvasPoint(e));
+  if (pointers.size === 2) pinchDist = pinchInfo().dist;
+  beginGesture();
+  canvas.classList.add("panning");
+});
+
+canvas.addEventListener("pointermove", (e) => {
+  if (!pointers.has(e.pointerId)) return;
+  const prev = pointers.get(e.pointerId);
+  const p = canvasPoint(e);
+  if (pointers.size === 1) {
+    state.origX += p.x - prev.x;
+    state.origY += p.y - prev.y;
+    pointers.set(e.pointerId, p);
+  } else if (pointers.size === 2) {
+    const before = pinchInfo();
+    pointers.set(e.pointerId, p);
+    const after = pinchInfo();
+    state.origX += after.mx - before.mx;
+    state.origY += after.my - before.my;
+    if (after.dist > 0 && pinchDist > 0) zoomAt(after.mx, after.my, pinchDist / after.dist);
+    pinchDist = after.dist;
+  }
+  drawGesturePreview();
+});
+
+function releasePointer(e) {
+  if (!pointers.delete(e.pointerId)) return;
+  if (pointers.size === 2) pinchDist = pinchInfo().dist;
+  if (pointers.size === 0) {
+    canvas.classList.remove("panning");
+    endGesture(0);
+  }
+}
+canvas.addEventListener("pointerup", releasePointer);
+canvas.addEventListener("pointercancel", releasePointer);
+
+// Right-drag pans, so suppress the context menu on the canvas
+canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
 // Draw XOR selection rectangle on an overlay canvas
 const overlayCanvas = document.getElementById("overlay-canvas");
@@ -393,14 +631,7 @@ function enterJuliaMode() {
     rotation: state.rotation,
   };
   state.isJulia = true;
-  state.rotation = 0;
-  const z = state.lockRatio
-    ? 4.0 / Math.min(state.width, state.height)
-    : null;
-  state.zoomX = z !== null ? z : 4.0 / state.width;
-  state.zoomY = z !== null ? z : 4.0 / state.height;
-  state.origX = Math.round(state.width  / 2);
-  state.origY = Math.round(state.height / 2);
+  setDefaultGeometry();
 }
 
 function enterMandelbrotMode() {
@@ -413,6 +644,9 @@ function enterMandelbrotMode() {
     state.zoomY    = state.backup.zoomY;
     state.rotation = state.backup.rotation;
     state.backup   = null;
+  } else {
+    // e.g. a Julia config was loaded – there is no Mandelbrot view to return to
+    setDefaultGeometry();
   }
 }
 
@@ -422,14 +656,18 @@ function enterMandelbrotMode() {
 
 const juliaOverlay = document.getElementById("julia-overlay");
 
-function updateJuliaPreviewPosition(px, py) {
-  const rect = canvas.getBoundingClientRect();
-  const containerRect = document.getElementById("canvas-wrapper").getBoundingClientRect();
-  // Position overlay near cursor but within viewport
-  let left = rect.left - containerRect.left + px + 12;
-  let top  = rect.top  - containerRect.top  + py + 12;
-  if (left + 160 > containerRect.width)  left = px - 165;
-  if (top  + 160 > containerRect.height) top  = py - 165;
+function updateJuliaPreviewPosition(e) {
+  const wrapper = document.getElementById("canvas-wrapper");
+  const containerRect = wrapper.getBoundingClientRect();
+  // Position overlay near cursor but within the visible wrapper area
+  const viewX = e.clientX - containerRect.left;
+  const viewY = e.clientY - containerRect.top;
+  let left = viewX + 12;
+  let top  = viewY + 12;
+  if (left + 160 > containerRect.width)  left = viewX - 165;
+  if (top  + 160 > containerRect.height) top  = viewY - 165;
+  left += wrapper.scrollLeft;
+  top  += wrapper.scrollTop;
   juliaOverlay.style.left = left + "px";
   juliaOverlay.style.top  = top  + "px";
   juliaOverlay.style.display = "block";
@@ -464,10 +702,56 @@ function drawPaletteBar() {
 // RESIZE CANVAS
 // ---------------------------------------------------------------------------
 
-const SIZE_PRESETS = [
-  [200, 200], [256, 256], [320, 240], [400, 300],
-  [400, 400], [512, 512], [640, 480], [800, 600],
-];
+const SIZE_PRESETS = {
+  "Square": [[200, 200], [256, 256], [400, 400], [512, 512], [768, 768], [1024, 1024], [2048, 2048]],
+  "4:3":    [[320, 240], [400, 300], [640, 480], [800, 600], [1024, 768], [1600, 1200]],
+  "16:9":   [[1280, 720], [1920, 1080], [2560, 1440], [3840, 2160]],
+};
+const MAX_SIZE = 8192;
+const sizeSel = document.getElementById("sel-size");
+const customSizeRow = document.getElementById("custom-size-row");
+
+// Rebuild the size dropdown so it always shows the current resolution –
+// a size that is not a preset (custom, loaded config, Fill window) gets its
+// own entry at the top.
+function syncSizeSelect() {
+  const current = `${state.width}x${state.height}`;
+  const isPreset = Object.values(SIZE_PRESETS).flat().some(([w, h]) => `${w}x${h}` === current);
+  const opt = (value, text) => {
+    const o = document.createElement("option");
+    o.value = value; o.textContent = text;
+    return o;
+  };
+  sizeSel.innerHTML = "";
+  if (!isPreset) sizeSel.appendChild(opt(current, `${state.width}×${state.height}`));
+  for (const [group, sizes] of Object.entries(SIZE_PRESETS)) {
+    const og = document.createElement("optgroup");
+    og.label = group;
+    sizes.forEach(([w, h]) => og.appendChild(opt(`${w}x${h}`, `${w}×${h}`)));
+    sizeSel.appendChild(og);
+  }
+  sizeSel.appendChild(opt("custom", "Custom…"));
+  sizeSel.value = current;
+}
+
+function showCustomSize() {
+  document.getElementById("inp-size-w").value = state.width;
+  document.getElementById("inp-size-h").value = state.height;
+  customSizeRow.hidden = false;
+  document.getElementById("inp-size-w").focus();
+}
+
+function applyCustomSize() {
+  const w = parseInt(document.getElementById("inp-size-w").value);
+  const h = parseInt(document.getElementById("inp-size-h").value);
+  if (!(w >= 16 && h >= 16 && w <= MAX_SIZE && h <= MAX_SIZE)) {
+    alert(`Width and height must be between 16 and ${MAX_SIZE} px.`);
+    return;
+  }
+  customSizeRow.hidden = true;
+  changeResolution(w, h);
+  scheduleRender();
+}
 
 function changeResolution(newW, newH) {
   // Preserve the view center when resizing
@@ -700,11 +984,23 @@ document.getElementById("chk-lockratio").addEventListener("change", (e) => {
 });
 
 // Image size presets
-document.getElementById("sel-size").addEventListener("change", (e) => {
+sizeSel.addEventListener("change", (e) => {
+  if (e.target.value === "custom") {
+    syncSizeSelect();   // keep showing the current size until applied
+    showCustomSize();
+    return;
+  }
+  customSizeRow.hidden = true;
   const [w, h] = e.target.value.split("x").map(Number);
   changeResolution(w, h);
   scheduleRender();
 });
+document.getElementById("btn-size-apply").addEventListener("click", applyCustomSize);
+["inp-size-w", "inp-size-h"].forEach(id =>
+  document.getElementById(id).addEventListener("keydown", (e) => {
+    if (e.key === "Enter") applyCustomSize();
+    if (e.key === "Escape") customSizeRow.hidden = true;
+  }));
 
 // Palette preset buttons
 document.querySelectorAll(".palette-preset").forEach(btn => {
@@ -721,6 +1017,13 @@ document.querySelectorAll(".palette-preset").forEach(btn => {
 
 // Re-render button
 document.getElementById("btn-rerender").addEventListener("click", () => startRender());
+
+// Display mode & full screen
+document.getElementById("sel-display").addEventListener("change", (e) => setDisplayMode(e.target.value));
+document.getElementById("btn-fullscreen").addEventListener("click", toggleFullscreen);
+document.addEventListener("fullscreenchange", () => {
+  document.getElementById("btn-fullscreen").classList.toggle("active", !!document.fullscreenElement);
+});
 
 // ---------------------------------------------------------------------------
 // SAVE / LOAD / EXPORT
@@ -779,10 +1082,81 @@ function applyConfig(cfg) {
   updateParamDisplay();
 }
 
+// ---------------------------------------------------------------------------
+// STORAGE
+// Two interchangeable backends with the same interface:
+//   - "server": the Flask REST API (app.py)
+//   - "local":  browser localStorage, used when there is no backend
+//               (e.g. when hosted as static files on GitHub Pages)
+// The backend is detected once at startup.
+// ---------------------------------------------------------------------------
+
+function serverStore(kind) {
+  const base = `api/${kind}`;   // relative, so it also works under a sub-path
+  return {
+    async list() {
+      const res = await fetch(base);
+      if (!res.ok) throw new Error(res.statusText);
+      return res.json();
+    },
+    async get(name) {
+      const res = await fetch(`${base}/${encodeURIComponent(name)}`);
+      if (!res.ok) throw new Error(res.statusText);
+      return res.json();
+    },
+    async save(name, data) {
+      const res = await fetch(`${base}/${encodeURIComponent(name)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error(res.statusText);
+    },
+    async remove(name) {
+      const res = await fetch(`${base}/${encodeURIComponent(name)}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(res.statusText);
+    },
+  };
+}
+
+function localStore(kind) {
+  const key = `fractal-explorer:${kind}`;
+  const readAll = () => {
+    try { return JSON.parse(localStorage.getItem(key)) || {}; }
+    catch (_) { return {}; }
+  };
+  const writeAll = (all) => localStorage.setItem(key, JSON.stringify(all));
+  return {
+    async list()   { return Object.keys(readAll()).sort(); },
+    async get(name) {
+      const all = readAll();
+      if (!(name in all)) throw new Error("Not found");
+      return all[name];
+    },
+    async save(name, data) { const all = readAll(); all[name] = data; writeAll(all); },
+    async remove(name)     { const all = readAll(); delete all[name]; writeAll(all); },
+  };
+}
+
+const storage = { mode: "local", fractals: localStore("fractals"), palettes: localStore("palettes") };
+
+async function detectStorage() {
+  try {
+    const res = await fetch("api/fractals", { cache: "no-store" });
+    const type = res.headers.get("content-type") || "";
+    if (res.ok && type.includes("application/json")) {
+      storage.mode = "server";
+      storage.fractals = serverStore("fractals");
+      storage.palettes = serverStore("palettes");
+    }
+  } catch (_) { /* no backend – stay local */ }
+  document.getElementById("lbl-storage").textContent =
+    storage.mode === "server" ? "server" : "browser";
+}
+
 async function loadFractalList() {
   try {
-    const res = await fetch("/api/fractals");
-    const names = await res.json();
+    const names = await storage.fractals.list();
     const sel = document.getElementById("sel-load-fractal");
     sel.innerHTML = '<option value="">— select —</option>';
     names.forEach(n => {
@@ -797,19 +1171,11 @@ document.getElementById("btn-save-fractal").addEventListener("click", async () =
   const name = document.getElementById("inp-save-name").value.trim();
   if (!name) { alert("Please enter a name to save."); return; }
   try {
-    const res = await fetch(`/api/fractals/${encodeURIComponent(name)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(buildConfig()),
-    });
-    if (res.ok) {
-      setStatus(`Saved "${name}"`);
-      await loadFractalList();
-    } else {
-      alert("Save failed: " + res.statusText);
-    }
+    await storage.fractals.save(name, buildConfig());
+    setStatus(`Saved "${name}"`);
+    await loadFractalList();
   } catch (err) {
-    alert("Save error: " + err.message);
+    alert("Save failed: " + err.message);
   }
 });
 
@@ -817,40 +1183,67 @@ document.getElementById("btn-load-fractal").addEventListener("click", async () =
   const name = document.getElementById("sel-load-fractal").value;
   if (!name) return;
   try {
-    const res = await fetch(`/api/fractals/${encodeURIComponent(name)}`);
-    if (!res.ok) { alert("Load failed"); return; }
-    const cfg = await res.json();
-    applyConfig(cfg);
+    applyConfig(await storage.fractals.get(name));
     scheduleRender();
     setStatus(`Loaded "${name}"`);
   } catch (err) {
-    alert("Load error: " + err.message);
+    alert("Load failed: " + err.message);
   }
 });
 
 document.getElementById("btn-delete-fractal").addEventListener("click", async () => {
   const name = document.getElementById("sel-load-fractal").value;
   if (!name || !confirm(`Delete "${name}"?`)) return;
-  await fetch(`/api/fractals/${encodeURIComponent(name)}`, { method: "DELETE" });
-  await loadFractalList();
-  setStatus(`Deleted "${name}"`);
+  try {
+    await storage.fractals.remove(name);
+    await loadFractalList();
+    setStatus(`Deleted "${name}"`);
+  } catch (err) {
+    alert("Delete failed: " + err.message);
+  }
 });
+
+function downloadBlob(blob, filename) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
 
 // Export PNG via canvas
 document.getElementById("btn-export-png").addEventListener("click", () => {
-  canvas.toBlob(blob => {
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `fractal-${Date.now()}.png`;
-    a.click();
-  });
+  canvas.toBlob(blob => downloadBlob(blob, `fractal-${Date.now()}.png`));
+});
+
+// Export / import the current config as a JSON file – works without a
+// backend and moves fractals between browsers or into the server's fractals/
+document.getElementById("btn-export-json").addEventListener("click", () => {
+  const name = document.getElementById("inp-save-name").value.trim() || `fractal-${Date.now()}`;
+  const json = JSON.stringify(buildConfig(), null, 2);
+  downloadBlob(new Blob([json], { type: "application/json" }), `${name}.json`);
+});
+
+const importInput = document.getElementById("inp-import-json");
+document.getElementById("btn-import-json").addEventListener("click", () => importInput.click());
+importInput.addEventListener("change", async () => {
+  const file = importInput.files[0];
+  importInput.value = "";
+  if (!file) return;
+  try {
+    applyConfig(JSON.parse(await file.text()));
+    document.getElementById("inp-save-name").value = file.name.replace(/\.json$/i, "");
+    scheduleRender();
+    setStatus(`Imported "${file.name}"`);
+  } catch (err) {
+    alert("Import failed: " + err.message);
+  }
 });
 
 // Save/load custom palette
 async function loadPaletteList() {
   try {
-    const res = await fetch("/api/palettes");
-    const names = await res.json();
+    const names = await storage.palettes.list();
     const sel = document.getElementById("sel-load-palette");
     sel.innerHTML = '<option value="">— select —</option>';
     names.forEach(n => {
@@ -865,12 +1258,9 @@ document.getElementById("btn-save-palette").addEventListener("click", async () =
   const name = document.getElementById("inp-palette-name").value.trim();
   if (!name) { alert("Please enter a palette name."); return; }
   try {
-    const res = await fetch(`/api/palettes/${encodeURIComponent(name)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ palette: state.palette }),
-    });
-    if (res.ok) { setStatus(`Palette saved "${name}"`); await loadPaletteList(); }
+    await storage.palettes.save(name, { palette: state.palette });
+    setStatus(`Palette saved "${name}"`);
+    await loadPaletteList();
   } catch (err) { alert("Error: " + err.message); }
 });
 
@@ -878,8 +1268,7 @@ document.getElementById("btn-load-palette").addEventListener("click", async () =
   const name = document.getElementById("sel-load-palette").value;
   if (!name) return;
   try {
-    const res = await fetch(`/api/palettes/${encodeURIComponent(name)}`);
-    const data = await res.json();
+    const data = await storage.palettes.get(name);
     state.palette = data.palette || buildGreyscale();
     scheduleRender();
     setStatus(`Palette loaded "${name}"`);
@@ -891,8 +1280,10 @@ document.getElementById("btn-load-palette").addEventListener("click", async () =
 // ---------------------------------------------------------------------------
 
 document.addEventListener("keydown", (e) => {
-  if (e.target.tagName === "INPUT") return;
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
   switch (e.key) {
+    case "p": case "P": setCtrlMode("pan");    break;
+    case "f": case "F": toggleFullscreen();    break;
     case "z": case "Z": setCtrlMode("zoom");   break;
     case "c": case "C": setCtrlMode("center"); break;
     case "j": case "J": setCtrlMode("julia");  break;
@@ -929,19 +1320,12 @@ function init() {
   overlayCanvas.width  = state.width;
   overlayCanvas.height = state.height;
 
-  // Populate size select
-  const sizeSel = document.getElementById("sel-size");
-  SIZE_PRESETS.forEach(([w, h]) => {
-    const opt = document.createElement("option");
-    opt.value = `${w}x${h}`;
-    opt.textContent = `${w}×${h}`;
-    if (w === state.width && h === state.height) opt.selected = true;
-    sizeSel.appendChild(opt);
-  });
+  document.getElementById("sel-display").value = displayMode;
+  sizeSel.disabled = displayMode === "window";
+  syncWindowResolution();
 
   updateParamDisplay();
-  loadFractalList();
-  loadPaletteList();
+  detectStorage().then(() => { loadFractalList(); loadPaletteList(); });
   scheduleRender();
   setStatus("Ready");
 }

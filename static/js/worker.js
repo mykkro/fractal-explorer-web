@@ -174,9 +174,20 @@ function magnet(r0, i0, r1, i1, iter, bail) {
   return { f, rz1, iz1 };
 }
 
-function newton(r0, i0, r1, i1, iter, bail) {
-  // Newton swaps the role of r0/i0 and r1/i1 (see original Java)
-  let rz0 = r1, iz0 = i1, rz1 = r0, iz1 = i0, f;
+/**
+ * Newton's method for z³ − a.
+ * Newton has no "c" in the usual sense, so both modes iterate from z₀ = pixel
+ * (the basins of attraction are what we want to see) and differ in `a`:
+ *   Mandelbrot mode: a = 1 + perturbation   (classic z³ − 1 by default)
+ *   Julia mode:      a = julia seed
+ * The original port used a = perturbation (0 by default → concentric rings)
+ * and, in Julia mode, swapped z₀ and a, which made it the only formula whose
+ * Julia mode was not a z-plane picture.
+ */
+function newton(r0, i0, r1, i1, iter, bail, isJulia) {
+  let rz0, iz0, rz1, iz1, f;
+  if (isJulia) { rz0 = r0;     iz0 = i0; rz1 = r1; iz1 = i1; }
+  else         { rz0 = 1 + r1; iz0 = i1; rz1 = r0; iz1 = i0; }
   for (f = 0; f < iter; f++) {
     const t = rz1, u = iz1;
     const p1 = rz1 * rz1 - iz1 * iz1;
@@ -293,7 +304,7 @@ function computePixel(ix, iy, cfg, formulaFn, inColorFn, outColorFn, pal) {
     r1 = cfg.pertX; i1 = cfg.pertY;
   }
 
-  const { f, rz1, iz1 } = formulaFn(r0, i0, r1, i1, cfg.iterations, cfg.bailout);
+  const { f, rz1, iz1 } = formulaFn(r0, i0, r1, i1, cfg.iterations, cfg.bailout, cfg.isJulia);
 
   let colorIdx;
   if (f < cfg.iterations) {
@@ -311,6 +322,19 @@ function computePixel(ix, iy, cfg, formulaFn, inColorFn, outColorFn, pal) {
  */
 const BATCH_ROWS = 8;
 
+// Progress frames copy the whole image, which gets expensive at large sizes
+// (a 4K frame is 33 MB), so they are rate-limited to ~10 per second.
+const PROGRESS_INTERVAL_MS = 100;
+let lastProgress = 0;
+
+function postProgress(id, buf32, upToRow) {
+  const now = performance.now();
+  if (now - lastProgress < PROGRESS_INTERVAL_MS) return;
+  lastProgress = now;
+  const snapshot = new Uint8ClampedArray(buf32.buffer.slice(0));
+  postMessage({ type: "progress", id, buffer: snapshot, upToRow }, [snapshot.buffer]);
+}
+
 async function renderLinear(id, cfg, buf32) {
   const w = cfg.width, h = cfg.height;
   const formulaFn  = FORMULAS[cfg.formula]  || mandelbrot;
@@ -327,8 +351,7 @@ async function renderLinear(id, cfg, buf32) {
       await new Promise(r => setTimeout(r, 0));
       if (currentId !== id) return; // preempted
 
-      const snapshot = new Uint8ClampedArray(buf32.buffer.slice(0));
-      postMessage({ type: "progress", id, buffer: snapshot, upToRow: y });
+      postProgress(id, buf32, y);
     }
   }
 }
@@ -363,14 +386,14 @@ async function renderSquared(id, cfg, buf32) {
     if (((y / sz) & 3) === 3 || y + sz >= h) {
       await new Promise(r => setTimeout(r, 0));
       if (currentId !== id) return;
-      const snapshot = new Uint8ClampedArray(buf32.buffer.slice(0));
-      postMessage({ type: "progress", id, buffer: snapshot, upToRow: Math.min(y + sz - 1, h - 1) });
+      postProgress(id, buf32, Math.min(y + sz - 1, h - 1));
     }
   }
 
-  // Refinement passes
-  const mask = sz - 1;
+  // Refinement passes – each pass skips pixels already computed by the
+  // previous (2k-sized) pass
   for (let k = sz >> 1; k > 0; k >>= 1) {
+    const mask = 2 * k - 1;
     for (let y = 0; y < h; y += k) {
       for (let x = 0; x < w; x += k) {
         if ((x & mask) !== 0 || (y & mask) !== 0) {
@@ -381,8 +404,7 @@ async function renderSquared(id, cfg, buf32) {
       if (((y / k) & 7) === 7 || y + k >= h) {
         await new Promise(r => setTimeout(r, 0));
         if (currentId !== id) return;
-        const snapshot = new Uint8ClampedArray(buf32.buffer.slice(0));
-        postMessage({ type: "progress", id, buffer: snapshot, upToRow: Math.min(y + k - 1, h - 1) });
+        postProgress(id, buf32, Math.min(y + k - 1, h - 1));
       }
     }
   }
@@ -397,6 +419,7 @@ onmessage = async function (e) {
 
   if (msg.type === "render") {
     currentId = msg.id;
+    lastProgress = 0;   // show the first coarse frame of a new render at once
     const cfg = msg.config;
     const buf32 = new Uint32Array(cfg.width * cfg.height);
 
@@ -406,7 +429,7 @@ onmessage = async function (e) {
     if (currentId === msg.id) {
       // Final full-resolution result
       const final = new Uint8ClampedArray(buf32.buffer);
-      postMessage({ type: "done", id: msg.id, buffer: final });
+      postMessage({ type: "done", id: msg.id, buffer: final }, [final.buffer]);
     }
   }
 };
